@@ -43,7 +43,6 @@ var (
 		"key-2": []byte("test data 2"),
 		"key-3": []byte("test data 3"),
 	}
-
 	errMissingBucket = errors.New("bucket not found")
 	errMissingKey    = errors.New("key not found")
 	errMissingObject = errors.New("Object data not found")
@@ -66,7 +65,6 @@ func (cosClient *mockCosClient) GetObjectWithContext(ctx context.Context, input 
 	if *input.Bucket != cosClient.bucket {
 		return &s3.GetObjectOutput{}, errMissingBucket
 	}
-
 	data, ok := cosClient.data[*input.Key]
 	if !ok {
 		return &s3.GetObjectOutput{}, errMissingKey

@@ -270,6 +270,19 @@ func (c *COSObjectClient) DeleteObject(ctx context.Context, objectKey string) er
 	})
 }
 
+// bucketFromKey maps a key to a bucket name
+func (c *COSObjectClient) bucketFromKey(key string) string {
+	if len(c.bucketNames) == 0 {
+		return ""
+	}
+
+	hasher := fnv.New32a()
+	hasher.Write([]byte(key)) //nolint: errcheck
+	hash := hasher.Sum32()
+
+	return c.bucketNames[hash%uint32(len(c.bucketNames))]
+}
+
 // GetObject returns a reader and the size for the specified object key from the configured S3 bucket.
 func (c *COSObjectClient) GetObject(ctx context.Context, objectKey string) (io.ReadCloser, int64, error) {
 
