@@ -31,7 +31,6 @@ var (
 	timestamp = time.Now().Local()
 
 	testData = map[string][]byte{
-		"key-1": []byte("test data 1"),
 		"key-2": []byte("test data 2"),
 		"key-3": []byte("test data 3"),
 	}
@@ -148,8 +147,6 @@ func Test_COSConfig(t *testing.T) {
 	tests := []struct {
 		name          string
 		cosConfig     COSConfig
-		expectedError error
-	}{
 		{
 			"empty accessKeyID and secretAccessKey",
 			COSConfig{

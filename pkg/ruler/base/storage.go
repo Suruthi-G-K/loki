@@ -71,6 +71,9 @@ func (cfg *RuleStoreConfig) Validate() error {
 	if err := cfg.S3.Validate(); err != nil {
 		return errors.Wrap(err, "invalid S3 Storage config")
 	}
+	if err := cfg.COS.Validate(); err != nil {
+		return errors.Wrap(err, "invalid COS Storage config")
+	}
 	return nil
 }
 
