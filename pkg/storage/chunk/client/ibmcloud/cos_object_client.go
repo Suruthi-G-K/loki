@@ -290,11 +290,11 @@ func (c *COSObjectClient) Stop() {}
 func (a *COSObjectClient) DeleteObject(ctx context.Context, objectKey string) error {
 	return instrument.CollectedRequest(ctx, "COS.DeleteObject", cosRequestDuration, instrument.ErrorCode, func(ctx context.Context) error {
 		deleteObjectInput := &cos.DeleteObjectInput{
-			Bucket: ibm.String(a.bucketFromKey(objectKey)),
+			Bucket: ibm.String(c.bucketFromKey(objectKey)),
 			Key:    ibm.String(objectKey),
 		}
 
-		_, err := a.cos.DeleteObjectWithContext(ctx, deleteObjectInput)
+		_, err := c.cos.DeleteObjectWithContext(ctx, deleteObjectInput)
 		return err
 	})
 }
