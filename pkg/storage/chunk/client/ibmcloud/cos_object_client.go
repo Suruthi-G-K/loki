@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -17,12 +18,14 @@ import (
 	"github.com/IBM/ibm-cos-sdk-go/aws/session"
 	cos "github.com/IBM/ibm-cos-sdk-go/service/s3"
 	cosiface "github.com/IBM/ibm-cos-sdk-go/service/s3/s3iface"
+	"github.com/go-kit/log/level"
 
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/grafana/dskit/backoff"
 	"github.com/grafana/dskit/flagext"
 	"github.com/grafana/loki/pkg/storage/chunk/client"
 	"github.com/grafana/loki/pkg/storage/chunk/client/hedging"
+	"github.com/grafana/loki/pkg/util/log"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/weaveworks/common/instrument"
@@ -37,7 +40,8 @@ var (
 	errEmptyBucket               = errors.New("at least one bucket name must be specified")
 	errCOSConfig                 = "failed to build cos config"
 	errServiceInstanceID         = errors.New("must supply ServiceInstanceID")
-	errInvalidCredentials        = errors.New("must supply any of Access Key ID and Secret Access Key or API Key")
+	errInvalidCredentials        = errors.New("must supply any of Access Key ID and Secret Access Key or API Key or CR token file path")
+	errTrustedProfile            = errors.New("must supply any of trusted profile name or trusted profile ID")
 )
 
 var cosRequestDuration = instrument.NewHistogramCollector(prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -69,8 +73,8 @@ type COSConfig struct {
 	ServiceInstanceID  string         `yaml:"service_instance_id"`
 	AuthEndpoint       string         `yaml:"auth_endpoint"`
 	CRTokenFilePath    string         `yaml:"cr_token_file_path"`
-	TrusterProfileName string         `yaml:"truster_profile_name"`
-	TrusterProfileID   string         `yaml:"truster_profile_id"`
+	TrustedProfileName string         `yaml:"trusted_profile_name"`
+	TrustedProfileID   string         `yaml:"trusted_profile_id"`
 }
 
 // HTTPConfig stores the http.Transport configuration
@@ -91,19 +95,23 @@ func (cfg *COSConfig) RegisterFlagsWithPrefix(prefix string, f *flag.FlagSet) {
 
 	f.StringVar(&cfg.Endpoint, prefix+"cos.endpoint", "", "COS Endpoint to connect to.")
 	f.StringVar(&cfg.Region, prefix+"cos.region", "", "COS region to use.")
-	f.StringVar(&cfg.AccessKeyID, prefix+"cos.access-key-id", "", "COS HMAC Access Key ID")
-	f.Var(&cfg.SecretAccessKey, prefix+"cos.secret-access-key", "COS HMAC Secret Access Key")
+	f.StringVar(&cfg.AccessKeyID, prefix+"cos.access-key-id", "", "COS HMAC Access Key ID.")
+	f.Var(&cfg.SecretAccessKey, prefix+"cos.secret-access-key", "COS HMAC Secret Access Key.")
 
 	f.DurationVar(&cfg.HTTPConfig.IdleConnTimeout, prefix+"cos.http.idle-conn-timeout", 90*time.Second, "The maximum amount of time an idle connection will be held open.")
 	f.DurationVar(&cfg.HTTPConfig.ResponseHeaderTimeout, prefix+"cos.http.response-header-timeout", 0, "If non-zero, specifies the amount of time to wait for a server's response headers after fully writing the request.")
 
-	f.DurationVar(&cfg.BackoffConfig.MinBackoff, prefix+"cos.min-backoff", 100*time.Millisecond, "Minimum backoff time when cos get Object")
-	f.DurationVar(&cfg.BackoffConfig.MaxBackoff, prefix+"cos.max-backoff", 3*time.Second, "Maximum backoff time when cos get Object")
-	f.IntVar(&cfg.BackoffConfig.MaxRetries, prefix+"cos.max-retries", 5, "Maximum number of times to retry when cos get Object")
+	f.DurationVar(&cfg.BackoffConfig.MinBackoff, prefix+"cos.min-backoff", 100*time.Millisecond, "Minimum backoff time when cos get Object.")
+	f.DurationVar(&cfg.BackoffConfig.MaxBackoff, prefix+"cos.max-backoff", 3*time.Second, "Maximum backoff time when cos get Object.")
+	f.IntVar(&cfg.BackoffConfig.MaxRetries, prefix+"cos.max-retries", 5, "Maximum number of times to retry when cos get Object.")
 
-	f.Var(&cfg.APIKey, prefix+"cos.api-key", "api Key")
-	f.StringVar(&cfg.AuthEndpoint, prefix+"cos.auth-endpoint", defaultCOSAuthEndpoint, "Auth Endpoint to connect to.")
-	f.StringVar(&cfg.ServiceInstanceID, prefix+"cos.service-instance-id", "", "COS service instance id to use")
+	f.Var(&cfg.APIKey, prefix+"cos.api-key", "IAM API key to access COS.")
+	f.StringVar(&cfg.AuthEndpoint, prefix+"cos.auth-endpoint", defaultCOSAuthEndpoint, "IAM Auth Endpoint for authentication.")
+	f.StringVar(&cfg.ServiceInstanceID, prefix+"cos.service-instance-id", "", "COS service instance id to use.")
+
+	f.StringVar(&cfg.CRTokenFilePath, prefix+"cos.cr-token-file-path", "", "Compute resource token file path.")
+	f.StringVar(&cfg.TrustedProfileName, prefix+"cos.trusted-profile-name", "", "Name of the trusted profile.")
+	f.StringVar(&cfg.TrustedProfileID, prefix+"cos.trusted-profile-id", "", "ID of the trusted profile.")
 }
 
 type COSObjectClient struct {
@@ -138,9 +146,19 @@ func NewCOSObjectClient(cfg COSConfig, hedgingCfg hedging.Config) (*COSObjectCli
 }
 
 func validate(cfg COSConfig) error {
-	if (cfg.AccessKeyID == "" && cfg.SecretAccessKey.String() == "") && cfg.APIKey.String() == "" && cfg.TrusterProfileName == "" &&
-		cfg.TrusterProfileID == "" && cfg.CRTokenFilePath == "" {
+	if (cfg.AccessKeyID == "" && cfg.SecretAccessKey.String() == "") &&
+		cfg.APIKey.String() == "" && cfg.CRTokenFilePath == "" {
 		return errInvalidCredentials
+	}
+
+	if cfg.CRTokenFilePath != "" {
+		if _, err := os.Stat(cfg.CRTokenFilePath); errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+
+		if cfg.TrustedProfileName == "" && cfg.TrustedProfileID == "" {
+			return errTrustedProfile
+		}
 	}
 
 	if cfg.AccessKeyID != "" && cfg.SecretAccessKey.String() == "" ||
@@ -167,17 +185,37 @@ func validate(cfg COSConfig) error {
 }
 
 func getCreds(cfg COSConfig) *credentials.Credentials {
-	if cfg.CRTokenFilePath != "" {
-		return NewTrustedProfileCredentials(cfg.AuthEndpoint, cfg.TrusterProfileName, cfg.TrusterProfileID, cfg.CRTokenFilePath)
-	}
-	if cfg.APIKey.String() != "" {
+	switch {
+	case cfg.CRTokenFilePath != "":
+		level.Info(log.Logger).Log(
+			"msg", "using the trusted profile auth",
+			"cr_token_file_path", cfg.CRTokenFilePath,
+			"trusted_profile_name", cfg.TrustedProfileName,
+			"trusted_profile_id", cfg.TrustedProfileID,
+			"auth_endpoint", cfg.AuthEndpoint,
+		)
+
+		return NewTrustedProfileCredentials(cfg.AuthEndpoint, cfg.TrustedProfileName,
+			cfg.TrustedProfileID, cfg.CRTokenFilePath)
+
+	case cfg.APIKey.String() != "":
+		level.Info(log.Logger).Log(
+			"msg", "using the APIkey auth",
+			"service_instance_id", cfg.ServiceInstanceID,
+			"auth_endpoint", cfg.AuthEndpoint,
+		)
+
 		return ibmiam.NewStaticCredentials(ibm.NewConfig(),
 			cfg.AuthEndpoint, cfg.APIKey.String(), cfg.ServiceInstanceID)
-	}
-	if cfg.AccessKeyID != "" && cfg.SecretAccessKey.String() != "" {
+
+	case cfg.AccessKeyID != "" && cfg.SecretAccessKey.String() != "":
+		level.Info(log.Logger).Log("msg", "using the HMAC auth")
+
 		return credentials.NewStaticCredentials(cfg.AccessKeyID, cfg.SecretAccessKey.String(), "")
+
+	default:
+		return nil
 	}
-	return nil
 }
 
 func buildCOSClient(cfg COSConfig, hedgingCfg hedging.Config, hedging bool) (*cos.S3, error) {
