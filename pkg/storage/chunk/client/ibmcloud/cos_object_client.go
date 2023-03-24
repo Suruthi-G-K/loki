@@ -185,7 +185,8 @@ func validate(cfg COSConfig) error {
 }
 
 func getCreds(cfg COSConfig) *credentials.Credentials {
-	if cfg.CRTokenFilePath != "" {
+	switch {
+	case cfg.CRTokenFilePath != "":
 		level.Info(log.Logger).Log(
 			"msg", "using the trusted profile auth",
 			"cr_token_file_path", cfg.CRTokenFilePath,
@@ -196,9 +197,8 @@ func getCreds(cfg COSConfig) *credentials.Credentials {
 
 		return NewTrustedProfileCredentials(cfg.AuthEndpoint, cfg.TrustedProfileName,
 			cfg.TrustedProfileID, cfg.CRTokenFilePath)
-	}
 
-	if cfg.APIKey.String() != "" {
+	case cfg.APIKey.String() != "":
 		level.Info(log.Logger).Log(
 			"msg", "using the APIkey auth",
 			"service_instance_id", cfg.ServiceInstanceID,
@@ -207,15 +207,15 @@ func getCreds(cfg COSConfig) *credentials.Credentials {
 
 		return ibmiam.NewStaticCredentials(ibm.NewConfig(),
 			cfg.AuthEndpoint, cfg.APIKey.String(), cfg.ServiceInstanceID)
-	}
 
-	if cfg.AccessKeyID != "" && cfg.SecretAccessKey.String() != "" {
+	case cfg.AccessKeyID != "" && cfg.SecretAccessKey.String() != "":
 		level.Info(log.Logger).Log("msg", "using the HMAC auth")
 
 		return credentials.NewStaticCredentials(cfg.AccessKeyID, cfg.SecretAccessKey.String(), "")
-	}
 
-	return nil
+	default:
+		return nil
+	}
 }
 
 func buildCOSClient(cfg COSConfig, hedgingCfg hedging.Config, hedging bool) (*cos.S3, error) {

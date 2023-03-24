@@ -398,6 +398,8 @@ storage_config:
 # trusted profile name or trusted profile ID along with the compute resource token file.
 # If we pass both trusted profile name and trusted profile ID it should be of 
 # same trusted profile.
+# In order to have Trusted profile authentication we need to follow an additional step to create a trusted profile.
+# See more details about trusted profile here https://cloud.ibm.com/docs/account?topic=account-create-trusted-profile&interface=ui.
 
 schema_config:
   configs:
@@ -416,8 +418,7 @@ storage_config:
     region: <region>
     auth_endpoint: <iam_endpoint_for_authentication>
     cr_token_file_path: <path_to_compute_resource_token>
-    trusted_profile_name: <name_of_the_trusted_profile>
-    trusted_profile_id: <id_of_the_trusted_profile>
+    trusted_profile_name: <name_of_the_trusted_profile> # We can also use trusted_profile_id instead of trusted_profile_name
 
 ```
 

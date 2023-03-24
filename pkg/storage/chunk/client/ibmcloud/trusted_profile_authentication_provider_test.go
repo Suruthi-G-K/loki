@@ -57,8 +57,8 @@ func Test_TrustedProfileProvider(t *testing.T) {
 
 	for _, tt := range tests {
 
-		authServer := authServer(tt.token, tokenType)
-		defer authServer.Close()
+		mockAuthServer := authServer(tt.token, tokenType)
+		defer mockAuthServer.Close()
 
 		if tt.isValid {
 			file, err := createTempFile("crtoken", "test cr token")
@@ -68,7 +68,7 @@ func Test_TrustedProfileProvider(t *testing.T) {
 		}
 
 		prov := NewTrustedProfileProvider(tt.trustedProfileProviderName, tt.trustedProfileName, tt.trustedProfileID,
-			tt.crTokenFilePath, authServer.URL)
+			tt.crTokenFilePath, mockAuthServer.URL)
 
 		if !tt.isValid {
 			require.Equal(t, tt.crTokenFilePath, "", "cr token filepath did not match")
@@ -76,7 +76,7 @@ func Test_TrustedProfileProvider(t *testing.T) {
 		} else {
 			require.Equal(t, tt.trustedProfileName, prov.authenticator.IAMProfileName, "trusted profile name did not match")
 			require.Equal(t, tt.trustedProfileID, prov.authenticator.IAMProfileID, "trusted profile ID did not match")
-			require.Equal(t, authServer.URL, prov.authenticator.URL, "auth endpoint did not match")
+			require.Equal(t, mockAuthServer.URL, prov.authenticator.URL, "auth endpoint did not match")
 			require.Equal(t, tt.crTokenFilePath, prov.authenticator.CRTokenFilename, "cr token filepath did not match")
 			require.Equal(t, tt.trustedProfileProviderName, prov.providerName, "provider name did not match")
 			require.Equal(t, "oauth", prov.providerType)

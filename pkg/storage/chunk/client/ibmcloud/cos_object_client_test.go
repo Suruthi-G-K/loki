@@ -201,7 +201,7 @@ func Test_COSConfig(t *testing.T) {
 			errEmptyBucket,
 		},
 		{
-			"Access key ID and Secret Access key and APIKey and CR token file path is empty",
+			"Access key ID, Secret Access key, APIKey and CR token file path are empty",
 			COSConfig{
 				BucketNames:       "test",
 				Endpoint:          "test",
@@ -226,7 +226,7 @@ func Test_COSConfig(t *testing.T) {
 			errors.Wrap(errServiceInstanceID, errCOSConfig),
 		},
 		{
-			"CR token file path with empty trusted profile name and trusted profile ID",
+			"CR token file path with empty trusted profile name and ID",
 			COSConfig{
 				BucketNames:     "test",
 				Endpoint:        "test",
@@ -268,7 +268,6 @@ func Test_COSConfig(t *testing.T) {
 				AuthEndpoint:       "dummy",
 				CRTokenFilePath:    "dummy",
 				TrustedProfileName: "test",
-				TrustedProfileID:   "test",
 			},
 			nil,
 		},
@@ -506,20 +505,20 @@ func Test_APIKeyAuth(t *testing.T) {
 	tokenType := "Bearer"
 	resp := "testGet"
 
-	cosSvr := cosServer(testToken, tokenType, resp)
-	defer cosSvr.Close()
+	mockCosServer := cosServer(testToken, tokenType, resp)
+	defer mockCosServer.Close()
 
-	authServer := authServer(testToken, tokenType)
-	defer authServer.Close()
+	mockAuthServer := authServer(testToken, tokenType)
+	defer mockAuthServer.Close()
 
 	cosConfig := COSConfig{
 		BucketNames:       "dummy",
-		Endpoint:          cosSvr.URL,
+		Endpoint:          mockCosServer.URL,
 		Region:            "dummy",
 		APIKey:            flagext.SecretWithValue("dummy"),
 		ServiceInstanceID: "test",
 		ForcePathStyle:    true,
-		AuthEndpoint:      authServer.URL,
+		AuthEndpoint:      mockAuthServer.URL,
 		BackoffConfig: backoff.Config{
 			MaxRetries: 1,
 		},
@@ -541,11 +540,11 @@ func Test_TrustedProfileAuth(t *testing.T) {
 	tokenType := "Bearer"
 	resp := "testGet"
 
-	cosSvr := cosServer(testToken, tokenType, resp)
-	defer cosSvr.Close()
+	mockCosServer := cosServer(testToken, tokenType, resp)
+	defer mockCosServer.Close()
 
-	authServer := authServer(testToken, tokenType)
-	defer authServer.Close()
+	mockAuthServer := authServer(testToken, tokenType)
+	defer mockAuthServer.Close()
 
 	file, err := createTempFile("crtoken", "test cr token")
 	require.NoError(t, err)
@@ -553,10 +552,10 @@ func Test_TrustedProfileAuth(t *testing.T) {
 
 	cosConfig := COSConfig{
 		BucketNames:        "dummy",
-		Endpoint:           cosSvr.URL,
+		Endpoint:           mockCosServer.URL,
 		Region:             "dummy",
 		ForcePathStyle:     true,
-		AuthEndpoint:       authServer.URL,
+		AuthEndpoint:       mockAuthServer.URL,
 		CRTokenFilePath:    file.Name(),
 		TrustedProfileName: "test",
 		BackoffConfig: backoff.Config{
@@ -582,7 +581,10 @@ func cosServer(accessToken, tokenType, resp string) *httptest.Server {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, resp)
+		if _, err := fmt.Fprintln(w, resp); err != nil {
+			fmt.Println("failed to write data", err)
+			return
+		}
 	}))
 }
 
@@ -603,6 +605,9 @@ func authServer(accessToken, tokenType string) *httptest.Server {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		w.Write(data)
+		if _, err = w.Write(data); err != nil {
+			fmt.Println("failed to write data", err)
+			return
+		}
 	}))
 }
